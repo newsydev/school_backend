@@ -36,7 +36,7 @@ if (CLOUDINARY_CLOUD && CLOUDINARY_KEY && CLOUDINARY_SECRET) {
 }
 
 const app = express()
-app.use(cors({ origin: FRONTEND_ORIGIN }))
+app.use(cors())
 
 const upload = multer({ storage: multer.memoryStorage() })
 
