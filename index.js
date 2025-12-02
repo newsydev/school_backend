@@ -36,7 +36,9 @@ if (CLOUDINARY_CLOUD && CLOUDINARY_KEY && CLOUDINARY_SECRET) {
 }
 
 const app = express()
-app.use(cors())
+// Configure CORS to use FRONTEND_ORIGIN when provided; allow wildcard in dev by default.
+const corsOptions = FRONTEND_ORIGIN === '*' ? {} : { origin: FRONTEND_ORIGIN, credentials: true }
+app.use(cors(corsOptions))
 
 const upload = multer({ storage: multer.memoryStorage() })
 
@@ -47,10 +49,14 @@ function safeFilename(name){
 app.get('/', (req, res) => res.send('Admissions backend running'))
 
 // Simple admin auth config
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@school.local'
-const ADMIN_ID = process.env.ADMIN_ID || '77075'
-const ADMIN_PASS = process.env.ADMIN_PASS || 'password'
-const JWT_SECRET = process.env.JWT_SECRET || 'please-change-this-secret'
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL
+const ADMIN_ID = process.env.ADMIN_ID
+const ADMIN_PASS = process.env.ADMIN_PASS
+const JWT_SECRET = process.env.JWT_SECRET || null
+
+// Startup informational logs (do NOT print secrets)
+console.log('Admin config -> ADMIN_EMAIL set:', !!ADMIN_EMAIL, 'ADMIN_ID set:', !!ADMIN_ID)
+console.log('JWT secret set:', !!JWT_SECRET)
 
 function requireAdmin(req, res, next){
   // Allow bypassing auth in development for convenience.
@@ -69,6 +75,7 @@ function requireAdmin(req, res, next){
     req.user = payload
     return next()
   }catch(e){
+    console.warn('JWT verification failed:', e.message)
     return res.status(401).json({ error: 'Invalid token' })
   }
 }
@@ -76,11 +83,19 @@ function requireAdmin(req, res, next){
 // Admin login — returns JWT
 app.post('/api/v1/auth/login', express.json(), (req, res) => {
   const { email, password } = req.body
+  // Ensure admin credentials and JWT secret are configured in production
+  if (!ADMIN_PASS || (!ADMIN_EMAIL && !ADMIN_ID) || !JWT_SECRET) {
+    console.error('Admin login attempted but server admin credentials or JWT secret are not configured')
+    return res.status(500).json({ error: 'admin_not_configured' })
+  }
+
   // allow login via configured ADMIN_EMAIL or ADMIN_ID
-  if ((email === ADMIN_EMAIL || email === ADMIN_ID) && password === ADMIN_PASS){
+  const allowed = (email === ADMIN_EMAIL || email === ADMIN_ID) && password === ADMIN_PASS
+  if (allowed){
     const token = jwt.sign({ email, id: ADMIN_ID, role: 'admin' }, JWT_SECRET, { expiresIn: '8h' })
     return res.json({ token })
   }
+
   return res.status(401).json({ error: 'Invalid credentials' })
 })
 
