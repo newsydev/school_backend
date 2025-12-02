@@ -296,6 +296,18 @@ app.get('/api/v1/admin/admissions', requireAdmin, async (req, res) => {
   }
 })
 
+// Diagnostic endpoint (public) - indicates whether admin credentials and JWT secret are configured.
+// Returns non-sensitive booleans to help in deployment checks.
+app.get('/api/v1/admin/config', async (req, res) => {
+  try{
+    const adminConfigured = !!(ADMIN_PASS && (ADMIN_EMAIL || ADMIN_ID) && JWT_SECRET)
+    return res.json({ adminConfigured, hasAdminEmail: !!ADMIN_EMAIL, hasAdminId: !!ADMIN_ID, hasJwtSecret: !!JWT_SECRET, frontendOrigin: FRONTEND_ORIGIN })
+  }catch(err){
+    console.error('Config check error', err)
+    return res.status(500).json({ error: 'server_error' })
+  }
+})
+
 // Admin: get admission by id or application_id
 app.get('/api/v1/admin/admissions/:id', requireAdmin, async (req, res) => {
   const { id } = req.params
