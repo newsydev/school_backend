@@ -36,9 +36,7 @@ if (CLOUDINARY_CLOUD && CLOUDINARY_KEY && CLOUDINARY_SECRET) {
 }
 
 const app = express()
-// Configure CORS to use FRONTEND_ORIGIN when provided; allow wildcard in dev by default.
-const corsOptions = FRONTEND_ORIGIN === '*' ? {} : { origin: FRONTEND_ORIGIN, credentials: true }
-app.use(cors(corsOptions))
+app.use(cors({ origin: FRONTEND_ORIGIN }))
 
 const upload = multer({ storage: multer.memoryStorage() })
 
@@ -49,14 +47,10 @@ function safeFilename(name){
 app.get('/', (req, res) => res.send('Admissions backend running'))
 
 // Simple admin auth config
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL
-const ADMIN_ID = process.env.ADMIN_ID
-const ADMIN_PASS = process.env.ADMIN_PASS
-const JWT_SECRET = process.env.JWT_SECRET || null
-
-// Startup informational logs (do NOT print secrets)
-console.log('Admin config -> ADMIN_EMAIL set:', !!ADMIN_EMAIL, 'ADMIN_ID set:', !!ADMIN_ID)
-console.log('JWT secret set:', !!JWT_SECRET)
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@school.local'
+const ADMIN_ID = process.env.ADMIN_ID || '77075'
+const ADMIN_PASS = process.env.ADMIN_PASS || 'password'
+const JWT_SECRET = process.env.JWT_SECRET || 'please-change-this-secret'
 
 function requireAdmin(req, res, next){
   // Allow bypassing auth in development for convenience.
@@ -75,7 +69,6 @@ function requireAdmin(req, res, next){
     req.user = payload
     return next()
   }catch(e){
-    console.warn('JWT verification failed:', e.message)
     return res.status(401).json({ error: 'Invalid token' })
   }
 }
@@ -83,19 +76,11 @@ function requireAdmin(req, res, next){
 // Admin login — returns JWT
 app.post('/api/v1/auth/login', express.json(), (req, res) => {
   const { email, password } = req.body
-  // Ensure admin credentials and JWT secret are configured in production
-  if (!ADMIN_PASS || (!ADMIN_EMAIL && !ADMIN_ID) || !JWT_SECRET) {
-    console.error('Admin login attempted but server admin credentials or JWT secret are not configured')
-    return res.status(500).json({ error: 'admin_not_configured' })
-  }
-
   // allow login via configured ADMIN_EMAIL or ADMIN_ID
-  const allowed = (email === ADMIN_EMAIL || email === ADMIN_ID) && password === ADMIN_PASS
-  if (allowed){
+  if ((email === ADMIN_EMAIL || email === ADMIN_ID) && password === ADMIN_PASS){
     const token = jwt.sign({ email, id: ADMIN_ID, role: 'admin' }, JWT_SECRET, { expiresIn: '8h' })
     return res.json({ token })
   }
-
   return res.status(401).json({ error: 'Invalid credentials' })
 })
 
@@ -205,16 +190,50 @@ app.get('/api/v1/admissions/track', async (req, res) => {
   if (!application_id || !otp) return res.status(400).json({ error: 'missing_params' })
   try{
     // Try common column names for OTP: `otp_for_tracking` and `tracking_otp`.
+    console.log('Track request for', { application_id, otp })
     let result = await supabase.from('admission_applications').select('*').eq('application_id', application_id).eq('otp_for_tracking', otp).limit(1).single()
-    if (result.error) {
-      // fallback to alternate column name used elsewhere in code
-      result = await supabase.from('admission_applications').select('*').eq('application_id', application_id).eq('tracking_otp', otp).limit(1).single()
+    if (result && !result.error && result.data) {
+      console.log('Matched using otp_for_tracking')
+      return res.json({ application: result.data })
     }
-    const { data, error } = result || {}
+
+    // fallback to alternate column name used elsewhere in code
+    result = await supabase.from('admission_applications').select('*').eq('application_id', application_id).eq('tracking_otp', otp).limit(1).single()
+    if (result && !result.error && result.data) {
+      console.log('Matched using tracking_otp')
+      return res.json({ application: result.data })
+    }
+
+    // If neither matched, try to fetch the row by application_id alone for debugging
+    try{
+      const raw = await supabase.from('admission_applications').select('*').eq('application_id', application_id).limit(1).single()
+      if (raw && !raw.error && raw.data) {
+        console.log('Found row by application_id (otp mismatch). Row:', raw.data)
+        return res.status(404).json({ error: 'not_found', reason: 'otp_mismatch', row: raw.data })
+      }
+    }catch(e){
+      console.warn('Lookup by application_id failed:', e)
+    }
+
+    return res.status(404).json({ error: 'not_found' })
+  }catch(err){
+    console.error('Track error', err)
+    return res.status(500).json({ error: 'server_error' })
+  }
+})
+
+
+// Debug: lookup an application by application_id (no otp required)
+// Use this only for debugging in development.
+app.get('/api/v1/admissions/lookup', async (req, res) => {
+  const { application_id } = req.query
+  if (!application_id) return res.status(400).json({ error: 'missing_params' })
+  try{
+    const { data, error } = await supabase.from('admission_applications').select('*').eq('application_id', application_id).limit(1).single()
     if (error) return res.status(404).json({ error: 'not_found' })
     return res.json({ application: data })
   }catch(err){
-    console.error('Track error', err)
+    console.error('Lookup error', err)
     return res.status(500).json({ error: 'server_error' })
   }
 })
@@ -292,18 +311,6 @@ app.get('/api/v1/admin/admissions', requireAdmin, async (req, res) => {
     return res.json({ admissions: data })
   }catch(err){
     console.error('Admin list error', err)
-    return res.status(500).json({ error: 'server_error' })
-  }
-})
-
-// Diagnostic endpoint (public) - indicates whether admin credentials and JWT secret are configured.
-// Returns non-sensitive booleans to help in deployment checks.
-app.get('/api/v1/admin/config', async (req, res) => {
-  try{
-    const adminConfigured = !!(ADMIN_PASS && (ADMIN_EMAIL || ADMIN_ID) && JWT_SECRET)
-    return res.json({ adminConfigured, hasAdminEmail: !!ADMIN_EMAIL, hasAdminId: !!ADMIN_ID, hasJwtSecret: !!JWT_SECRET, frontendOrigin: FRONTEND_ORIGIN })
-  }catch(err){
-    console.error('Config check error', err)
     return res.status(500).json({ error: 'server_error' })
   }
 })
