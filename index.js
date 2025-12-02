@@ -74,14 +74,37 @@ function requireAdmin(req, res, next){
 }
 
 // Admin login — returns JWT
-app.post('/api/v1/auth/login', express.json(), (req, res) => {
+app.post('/api/v1/auth/login', express.json(), async (req, res) => {
   const { email, password } = req.body
-  // allow login via configured ADMIN_EMAIL or ADMIN_ID
-  if ((email === ADMIN_EMAIL || email === ADMIN_ID) && password === ADMIN_PASS){
-    const token = jwt.sign({ email, id: ADMIN_ID, role: 'admin' }, JWT_SECRET, { expiresIn: '8h' })
-    return res.json({ token })
+  try{
+    // Try to find admin in Supabase `admin` table first
+    try{
+      const { data, error } = await supabase.from('admin').select('*').eq('email', email).limit(1).single()
+      if (!error && data) {
+        // If row exists, validate password (stored plaintext or hashed depending on your setup)
+        if (data.password === password) {
+          const token = jwt.sign({ email: data.email, id: data.id || ADMIN_ID, role: 'admin' }, JWT_SECRET, { expiresIn: '8h' })
+          return res.json({ token })
+        }
+        // password mismatch
+        return res.status(401).json({ error: 'Invalid credentials' })
+      }
+    }catch(dbErr){
+      // If the admin table/query fails or no row found, we'll fall back to env-based credentials below.
+      console.warn('Admin table lookup error or no row:', dbErr && dbErr.message ? dbErr.message : dbErr)
+    }
+
+    // Fallback to configured ADMIN_EMAIL/ADMIN_ID for compatibility
+    if ((email === ADMIN_EMAIL || email === ADMIN_ID) && password === ADMIN_PASS){
+      const token = jwt.sign({ email, id: ADMIN_ID, role: 'admin' }, JWT_SECRET, { expiresIn: '8h' })
+      return res.json({ token })
+    }
+
+    return res.status(401).json({ error: 'Invalid credentials' })
+  }catch(err){
+    console.error('Auth login error', err)
+    return res.status(500).json({ error: 'server_error' })
   }
-  return res.status(401).json({ error: 'Invalid credentials' })
 })
 
 // Create admission: accepts multipart/form-data with optional files
