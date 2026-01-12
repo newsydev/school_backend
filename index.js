@@ -195,7 +195,6 @@ app.post('/api/v1/admissions', upload.fields([
       email: fields.email || null,
       aadhaar: fields.aadhaar || null,
       category: fields.category || null,
-      tracking_otp: fields.otp_for_tracking || null,
       status: fields.status || null,
       payment_status: fields.payment_status || null,
     }
