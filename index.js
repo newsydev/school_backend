@@ -465,9 +465,20 @@ app.put('/api/v1/admin/admissions/:id/review', requireAdmin, express.json(), asy
     }
 
     // Send email notification if status changed to approved or rejected
+    console.log('Checking email notification conditions:', {
+      hasStatus: !!status,
+      hasEmail: !!admission.email,
+      status: status,
+      email: admission.email
+    })
+
     if (status && admission.email) {
       const emailStatuses = ['approved', 'rejected']
-      if (emailStatuses.includes(status.toLowerCase())) {
+      const statusLower = status.toLowerCase()
+      console.log('Status check:', { statusLower, shouldSendEmail: emailStatuses.includes(statusLower) })
+
+      if (emailStatuses.includes(statusLower)) {
+        console.log('Attempting to send status email...')
         try {
           await sendAdminStatusEmail(
             admission.email,
@@ -476,12 +487,16 @@ app.put('/api/v1/admin/admissions/:id/review', requireAdmin, express.json(), asy
             status,
             remarks
           )
-          console.log(`Status email sent to ${admission.email} for application ${admission.application_id}`)
+          console.log(`✅ Status email sent successfully to ${admission.email} for application ${admission.application_id}`)
         } catch (emailErr) {
           // Log error but don't fail the request
-          console.error('Failed to send status email:', emailErr)
+          console.error('❌ Failed to send status email:', emailErr)
         }
+      } else {
+        console.log(`⚠️ Status "${status}" does not trigger email (must be 'approved' or 'rejected')`)
       }
+    } else {
+      console.log('⚠️ Email not sent - missing status or email:', { status, email: admission.email })
     }
 
     return res.json({ admission })
